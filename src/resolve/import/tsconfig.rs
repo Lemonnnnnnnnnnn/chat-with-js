@@ -51,11 +51,11 @@ pub fn resolve_tsconfig_alias(
     import: &str,
     compiler_options: &CompilerOptions,
     extensions: &[&str],
-) -> Result<Option<PathBuf>, Box<dyn Error>> {
+) -> Result<Vec<PathBuf>, Box<dyn Error>> {
     let base_url = &compiler_options.baseUrl;
     let paths = &compiler_options.paths;
 
-    for (pattern, replacements) in paths {
+    if let Some((pattern, replacements)) = paths.iter().next() {
         let replacement = replacements.first().unwrap();
         let resolved = convert_import_statement(
             import,
@@ -65,11 +65,10 @@ pub fn resolve_tsconfig_alias(
             },
             base_url,
         );
-        if let Some(found_path) = try_search_target(Path::new(&resolved), extensions) {
-            return Ok(Some(found_path));
-        }
+        let found_path = try_search_target(Path::new(&resolved), extensions);
+        return Ok(found_path);
     }
-    Ok(None)
+    Ok(vec![])
 }
 
 fn convert_import_statement(import_statement: &str, alias: Alias, base_url: &str) -> String {

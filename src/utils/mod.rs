@@ -1,16 +1,51 @@
-use std::path::{Path, PathBuf};
+pub mod find_path;
 
+use std::{
+    fs,
+    io::Read,
+    path::{Path, PathBuf},
+};
+
+use find_path::find_exports;
 use regex::Regex;
 
-pub fn try_search_target(path: &Path, extensions: &[&str]) -> Option<PathBuf> {
+pub fn try_search_target(path: &Path, extensions: &[&str]) -> Vec<PathBuf> {
+    let mut result = Vec::new();
+
     if path.is_dir() {
         let index_path = path.join("index");
         if let Some(index_path) = try_find_with_extensions(&index_path, extensions) {
-            return Some(index_path);
+            result.push(index_path.clone());
+            println!("Found target: {}", index_path.display());
         }
     }
-    try_find_with_extensions(path, extensions)
+
+    if let Some(path) = try_find_with_extensions(path, extensions) {
+        result.push(path.clone());
+        println!("Found target: {}", path.display());
+    }
+
+    let mut content = String::new();
+    for path in &result {
+        match fs::File::open(path) {
+            Ok(mut file) => {
+                file.read_to_string(&mut content).unwrap();
+                break;
+            }
+            _ => continue,
+        }
+    }
+
+    let exports = find_exports(&content);
+    println!("Found exports: {:?}", exports);
+    for export in exports {
+        let mut export_result = try_search_target(&path.join(export), extensions);
+        result.append(&mut export_result);
+    }
+
+    result
 }
+
 
 fn try_find_with_extensions(path: &Path, extensions: &[&str]) -> Option<PathBuf> {
     for ext in extensions {

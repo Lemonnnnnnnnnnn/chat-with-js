@@ -5,9 +5,10 @@ use std::{
     path::{Path, PathBuf},
 };
 
-use regex::Regex;
 use relative::resolve_relative_path;
 use tsconfig::{parse_tsconfig_file, resolve_tsconfig_alias, TsConfig};
+
+use crate::utils::find_path::find_imports;
 
 pub mod node_modules;
 pub mod relative;
@@ -43,50 +44,53 @@ impl ImportResolver {
         self.context.push_str(&format!("{}\n", &content));
 
         // 匹配 import 语句
-        let re = Regex::new(r#"import\s+.*?["'](.+?)["'];?"#)?;
-        for caps in re.captures_iter(&content) {
-            let import_path = &caps[1];
-            let resolved_path = self.resolve_import_path(import_path, path)?;
-
-            if let Some(resolved) = resolved_path {
-                // 递归解析导入的文件
-                self.resolve_import(&resolved)?;
-            } else {
-                // 如果解析失败，记录日志但继续
-                eprintln!("无法解析导入路径: {}", import_path);
-            }
+        let import_paths = find_imports(&content);
+        for import_path in import_paths {
+            self.resolve_import_path(import_path, path)?;
         }
 
         Ok(())
     }
 
     pub fn resolve_import_path(
-        &self,
+        &mut self,
         import: &str,
         current_file: &Path,
-    ) -> Result<Option<PathBuf>, Box<dyn Error>> {
+    ) -> Result<(), Box<dyn Error>> {
         let current_dir = current_file.parent().ok_or("无法获取当前文件的父目录")?;
 
-        // 1. 处理相对路径
-        if let Some(resolved_path) = resolve_relative_path(import, current_dir, &self.extensions)? {
-            return Ok(Some(resolved_path));
-        }
+        let resolved_path = self.get_resolved_path(import, current_dir)?;
 
-        // 2. 处理 tsconfig 别名
-        if let Some(compiler_options) = &self.tsconfig.as_ref().map(|t| t.compilerOptions.clone())
-        {
-            if let Some(resolved_path) =
-                resolve_tsconfig_alias(import, compiler_options, &self.extensions)?
-            {
-                return Ok(Some(resolved_path));
+        if !resolved_path.is_empty() {
+            for path in resolved_path {
+                if self.visited.contains(&path) {
+                    return Ok(());
+                }
+                self.visited.insert(path.clone());
+                let content = fs::read_to_string(&path)?;
+                self.context.push_str(&format!("{}\n", &content));
+                self.resolve_import(&path)?;
             }
         }
 
-        // 3. 处理 node_modules 解析
-        // if let Some(resolved_path) = resolve_node_modules(import, &self.extensions)? {
-        //     return Ok(Some(resolved_path));
-        // }
+        Ok(())
+    }
 
-        Ok(None)
+    fn get_resolved_path(
+        &self,
+        import: &str,
+        current_dir: &Path,
+    ) -> Result<Vec<PathBuf>, Box<dyn Error>> {
+        let mut resolved_path = resolve_relative_path(import, current_dir, &self.extensions)?;
+
+        if resolved_path.is_empty() {
+            if let Some(compiler_options) =
+                &self.tsconfig.as_ref().map(|t| t.compilerOptions.clone())
+            {
+                resolved_path = resolve_tsconfig_alias(import, compiler_options, &self.extensions)?;
+            }
+        }
+
+        Ok(resolved_path)
     }
 }
